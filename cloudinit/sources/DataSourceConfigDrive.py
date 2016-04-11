@@ -19,6 +19,7 @@
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import os
+import json
 
 from cloudinit import log as logging
 from cloudinit import sources
@@ -125,7 +126,19 @@ class DataSourceConfigDrive(openstack.SourceMixin, sources.DataSource):
         self.userdata_raw = results.get('userdata')
         self.version = results['version']
         self.files.update(results.get('files', {}))
-        self.vendordata_raw = results.get('vendordata')
+
+        # if vendordata includes 'cloud-init', then read that explicitly
+        # for cloud-init (for namespacing).
+        vd = results.get('vendordata')
+        if isinstance(vd, dict):
+            if 'cloud-init' in vd:
+                self.vendordata_raw = vd['cloud-init']
+            else:
+                # TODO(pquerna): this is so wrong.
+                self.vendordata_raw = json.dumps(vd)
+        else:
+            self.vendordata_raw = vd
+
         return True
 
 
@@ -160,7 +173,7 @@ def get_ds_mode(cfgdrv_ver, ds_cfg=None, user=None):
     return "net"
 
 
-def read_config_drive(source_dir, version="2012-08-10"):
+def read_config_drive(source_dir, version="2013-10-17"):
     reader = openstack.ConfigDriveReader(source_dir)
     finders = [
         (reader.read_v2, [], {'version': version}),
@@ -191,10 +204,23 @@ def on_first_boot(data, distro=None):
     if not isinstance(data, dict):
         raise TypeError("Config-drive data expected to be a dict; not %s"
                         % (type(data)))
+
+    networkapplied = False
+    jsonnet_conf = data.get('vendordata', {}).get('network_info')
+    if jsonnet_conf:
+        try:
+            LOG.debug("Updating network interfaces from JSON in config drive")
+            distro_user_config = distro.apply_network_json(jsonnet_conf)
+            networkapplied = True
+        except NotImplementedError:
+            LOG.debug("Distro does not implement networking setup via Vendor JSON.")
+            pass
+
     net_conf = data.get("network_config", '')
-    if net_conf and distro:
+    if networkapplied is False and net_conf and distro:
         LOG.debug("Updating network interfaces from config drive")
         distro.apply_network(net_conf)
+
     files = data.get('files', {})
     if files:
         LOG.debug("Writing %s injected files", len(files))

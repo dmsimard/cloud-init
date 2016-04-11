@@ -17,6 +17,7 @@
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import time
+import json
 
 from cloudinit import log as logging
 from cloudinit import sources
@@ -146,8 +147,12 @@ class DataSourceOpenStack(openstack.SourceMixin, sources.DataSource):
         # if vendordata includes 'cloud-init', then read that explicitly
         # for cloud-init (for namespacing).
         vd = results.get('vendordata')
-        if isinstance(vd, dict) and 'cloud-init' in vd:
-            self.vendordata_raw = vd['cloud-init']
+        if isinstance(vd, dict):
+            if 'cloud-init' in vd:
+                self.vendordata_raw = vd['cloud-init']
+            else:
+                # TODO(pquerna): this is so wrong.
+                self.vendordata_raw = json.dumps(vd)
         else:
             self.vendordata_raw = vd
 
